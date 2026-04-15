@@ -1,0 +1,298 @@
+import json
+
+cells = [
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["# Feature Significance Testing\n",
+                   "Tests: Point-Biserial Correlation, Mann-Whitney U, Chi-Square, Correlation Matrix, VIF"]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "import pandas as pd\n",
+            "import numpy as np\n",
+            "import matplotlib.pyplot as plt\n",
+            "import seaborn as sns\n",
+            "from scipy import stats\n",
+            "from scipy.stats import pointbiserialr, mannwhitneyu, chi2_contingency\n",
+            "from statsmodels.stats.outliers_influence import variance_inflation_factor\n",
+            "import warnings\n",
+            "warnings.filterwarnings('ignore')\n",
+            "\n",
+            "# Load filtered data and re-engineer features (same as preprocessing)\n",
+            "df = pd.read_parquet('../data/loans_filtered.parquet')\n",
+            "df = df.copy()\n",
+            "\n",
+            "FEATURES = [\n",
+            "    'dti', 'earliest_cr_line', 'purpose', 'annual_inc', 'pub_rec',\n",
+            "    'loan_amnt', 'int_rate', 'installment', 'grade', 'emp_length',\n",
+            "    'home_ownership', 'verification_status', 'open_acc', 'revol_bal',\n",
+            "    'revol_util', 'total_acc', 'mort_acc', 'delinq_2yrs', 'inq_last_6mths',\n",
+            "    'target'\n",
+            "]\n",
+            "df = df[FEATURES].copy()\n",
+            "\n",
+            "# Feature engineering\n",
+            "df['earliest_cr_line'] = pd.to_datetime(df['earliest_cr_line'], format='%b-%Y', errors='coerce')\n",
+            "df['credit_history_years'] = (pd.Timestamp('2018-12-31') - df['earliest_cr_line']).dt.days / 365\n",
+            "df = df.drop(columns=['earliest_cr_line'])\n",
+            "df['has_derogatory'] = (df['pub_rec'] > 0).astype(int)\n",
+            "df = df.drop(columns=['pub_rec'])\n",
+            "income_cap = df['annual_inc'].quantile(0.99)\n",
+            "df['annual_inc'] = df['annual_inc'].clip(0, income_cap)\n",
+            "emp_map = {'< 1 year': 0, '1 year': 1, '2 years': 2, '3 years': 3,\n",
+            "           '4 years': 4, '5 years': 5, '6 years': 6, '7 years': 7,\n",
+            "           '8 years': 8, '9 years': 9, '10+ years': 10}\n",
+            "df['emp_length'] = df['emp_length'].map(emp_map)\n",
+            "grade_map = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7}\n",
+            "df['grade'] = df['grade'].map(grade_map)\n",
+            "\n",
+            "# Drop NaN targets\n",
+            "df = df[df['target'].notna()]\n",
+            "\n",
+            "# Impute for significance testing\n",
+            "num_cols = df.select_dtypes(include='number').columns.tolist()\n",
+            "num_cols = [c for c in num_cols if c != 'target']\n",
+            "df[num_cols] = df[num_cols].fillna(df[num_cols].median())\n",
+            "cat_cols = df.select_dtypes(include='object').columns.tolist()\n",
+            "for col in cat_cols:\n",
+            "    df[col] = df[col].fillna(df[col].mode()[0])\n",
+            "\n",
+            "print('Ready for significance testing. Shape:', df.shape)"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Test 1: Point-Biserial Correlation\n",
+                   "Measures linear correlation between each numeric feature and the binary target.\n",
+                   "Range: -1 to +1. Values near 0 = weak signal."]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "results_pb = []\n",
+            "y = df['target']\n",
+            "\n",
+            "for col in num_cols:\n",
+            "    corr, pval = pointbiserialr(df[col].fillna(df[col].median()), y)\n",
+            "    results_pb.append({\n",
+            "        'feature': col,\n",
+            "        'correlation': round(corr, 4),\n",
+            "        'p_value': round(pval, 6),\n",
+            "        'significant': 'YES' if pval < 0.05 else 'NO'\n",
+            "    })\n",
+            "\n",
+            "pb_df = pd.DataFrame(results_pb).sort_values('correlation', key=abs, ascending=False)\n",
+            "print('Point-Biserial Correlation with target:')\n",
+            "print(pb_df.to_string(index=False))\n",
+            "\n",
+            "# Plot\n",
+            "plt.figure(figsize=(10, 6))\n",
+            "colors = ['tomato' if c > 0 else 'steelblue' for c in pb_df['correlation']]\n",
+            "plt.barh(pb_df['feature'], pb_df['correlation'], color=colors)\n",
+            "plt.axvline(0, color='black', linewidth=0.8)\n",
+            "plt.title('Point-Biserial Correlation with Target (positive = more default risk)')\n",
+            "plt.xlabel('Correlation')\n",
+            "plt.tight_layout()\n",
+            "plt.savefig('../data/feature_correlation.png', dpi=100)\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Test 2: Mann-Whitney U Test\n",
+                   "Non-parametric test. Checks if the distribution of a feature is significantly\n",
+                   "different between defaulters and paid borrowers. Does NOT assume normal distribution.\n",
+                   "p < 0.05 means the difference is statistically significant."]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "results_mw = []\n",
+            "group0 = df[df['target'] == 0]\n",
+            "group1 = df[df['target'] == 1]\n",
+            "\n",
+            "for col in num_cols:\n",
+            "    stat, pval = mannwhitneyu(\n",
+            "        group0[col].dropna(),\n",
+            "        group1[col].dropna(),\n",
+            "        alternative='two-sided'\n",
+            "    )\n",
+            "    median_paid    = round(group0[col].median(), 4)\n",
+            "    median_default = round(group1[col].median(), 4)\n",
+            "    results_mw.append({\n",
+            "        'feature': col,\n",
+            "        'median_paid': median_paid,\n",
+            "        'median_default': median_default,\n",
+            "        'p_value': round(pval, 6),\n",
+            "        'significant': 'YES' if pval < 0.05 else 'NO'\n",
+            "    })\n",
+            "\n",
+            "mw_df = pd.DataFrame(results_mw).sort_values('p_value')\n",
+            "print('Mann-Whitney U Test Results:')\n",
+            "print(mw_df.to_string(index=False))"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Test 3: Chi-Square Test (Categorical Features)\n",
+                   "Tests if a categorical feature and the target are independent.\n",
+                   "p < 0.05 = they are related (feature is useful)."]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "results_chi = []\n",
+            "\n",
+            "for col in cat_cols:\n",
+            "    contingency = pd.crosstab(df[col], df['target'])\n",
+            "    chi2, pval, dof, expected = chi2_contingency(contingency)\n",
+            "    results_chi.append({\n",
+            "        'feature': col,\n",
+            "        'chi2_stat': round(chi2, 2),\n",
+            "        'p_value': round(pval, 6),\n",
+            "        'degrees_of_freedom': dof,\n",
+            "        'significant': 'YES' if pval < 0.05 else 'NO'\n",
+            "    })\n",
+            "\n",
+            "chi_df = pd.DataFrame(results_chi).sort_values('chi2_stat', ascending=False)\n",
+            "print('Chi-Square Test Results (Categorical Features):')\n",
+            "print(chi_df.to_string(index=False))"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Test 4: Correlation Matrix (Multicollinearity Check)\n",
+                   "Find pairs of features that are highly correlated with each other.\n",
+                   "Correlated features are redundant — keeping both doesn't add information.\n",
+                   "Rule of thumb: |correlation| > 0.85 → consider dropping one."]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "corr_matrix = df[num_cols].corr()\n",
+            "\n",
+            "plt.figure(figsize=(14, 10))\n",
+            "mask = np.triu(np.ones_like(corr_matrix, dtype=bool))\n",
+            "sns.heatmap(\n",
+            "    corr_matrix, mask=mask, annot=True, fmt='.2f',\n",
+            "    cmap='RdBu_r', center=0, vmin=-1, vmax=1,\n",
+            "    linewidths=0.5, square=True\n",
+            ")\n",
+            "plt.title('Feature Correlation Matrix')\n",
+            "plt.tight_layout()\n",
+            "plt.savefig('../data/correlation_matrix.png', dpi=100)\n",
+            "plt.show()\n",
+            "\n",
+            "# Print high correlation pairs\n",
+            "print('Highly correlated pairs (|r| > 0.7):')\n",
+            "high_corr = []\n",
+            "for i in range(len(corr_matrix.columns)):\n",
+            "    for j in range(i+1, len(corr_matrix.columns)):\n",
+            "        r = corr_matrix.iloc[i, j]\n",
+            "        if abs(r) > 0.7:\n",
+            "            high_corr.append({\n",
+            "                'feature_1': corr_matrix.columns[i],\n",
+            "                'feature_2': corr_matrix.columns[j],\n",
+            "                'correlation': round(r, 3)\n",
+            "            })\n",
+            "if high_corr:\n",
+            "    print(pd.DataFrame(high_corr).sort_values('correlation', key=abs, ascending=False).to_string(index=False))\n",
+            "else:\n",
+            "    print('No pairs above 0.7 threshold')"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Test 5: VIF - Variance Inflation Factor\n",
+                   "Measures how much a feature's variance is explained by other features.\n",
+                   "VIF > 10 = severe multicollinearity (consider dropping).\n",
+                   "VIF 5-10 = moderate (keep an eye on it).\n",
+                   "VIF < 5 = acceptable."]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "vif_data = df[num_cols].dropna()\n",
+            "\n",
+            "vif_results = []\n",
+            "for i, col in enumerate(num_cols):\n",
+            "    vif = variance_inflation_factor(vif_data.values, i)\n",
+            "    vif_results.append({'feature': col, 'VIF': round(vif, 2)})\n",
+            "\n",
+            "vif_df = pd.DataFrame(vif_results).sort_values('VIF', ascending=False)\n",
+            "vif_df['verdict'] = vif_df['VIF'].apply(\n",
+            "    lambda v: 'DROP (severe)' if v > 10 else ('WATCH (moderate)' if v > 5 else 'OK')\n",
+            ")\n",
+            "print('VIF Results:')\n",
+            "print(vif_df.to_string(index=False))"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## Final Summary: Feature Ranking"]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# Combine point-biserial and Mann-Whitney results\n",
+            "summary = pb_df[['feature', 'correlation', 'significant']].copy()\n",
+            "summary.columns = ['feature', 'pb_correlation', 'pb_significant']\n",
+            "mw_sub = mw_df[['feature', 'p_value', 'significant']].copy()\n",
+            "mw_sub.columns = ['feature', 'mw_pvalue', 'mw_significant']\n",
+            "summary = summary.merge(mw_sub, on='feature')\n",
+            "\n",
+            "# Rank by absolute correlation\n",
+            "summary['abs_corr'] = summary['pb_correlation'].abs()\n",
+            "summary = summary.sort_values('abs_corr', ascending=False).drop(columns='abs_corr')\n",
+            "\n",
+            "print('=== FINAL FEATURE RANKING ===')\n",
+            "print(summary.to_string(index=False))\n",
+            "print('\\nCategorical features (all significant if Chi-Square p < 0.05):')\n",
+            "print(chi_df[['feature', 'chi2_stat', 'significant']].to_string(index=False))"
+        ]
+    }
+]
+
+nb = {
+    "cells": cells,
+    "metadata": {
+        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "language_info": {"name": "python", "version": "3.10.0"}
+    },
+    "nbformat": 4,
+    "nbformat_minor": 4
+}
+
+with open('e:/Projects/LendingClub_Loan/notebooks/03b_feature_significance.ipynb', 'w') as f:
+    json.dump(nb, f, indent=1)
+
+print('Created 03b_feature_significance.ipynb successfully')

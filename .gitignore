@@ -1,0 +1,30 @@
+# ── Large data files (too large for GitHub) ───────────────────────────────
+data/*.csv
+data/*.parquet
+data/*.pkl
+
+# ── Generated charts (reproducible from notebooks) ────────────────────────
+data/*.png
+
+# ── Python environment ─────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── OS / IDE ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Keep these ─────────────────────────────────────────────────────────────
+# notebooks/       ← committed
+# scripts/         ← committed
+# docs/            ← committed (report DOCX)
+# data/threshold.txt ← small file, keep it
