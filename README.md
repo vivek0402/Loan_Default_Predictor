@@ -181,4 +181,4 @@ Output: `docs/LendingClub_Loan_Default_Risk_Report_v4.docx`
 
 ## Author
 
-Vivek — [LinkedIn](#) | [GitHub](#)
+Vivek — [GitHub](https://github.com/vivek0402)
