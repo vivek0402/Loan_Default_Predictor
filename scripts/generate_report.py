@@ -523,6 +523,8 @@ toc_items = [
     ('15.', 'Limitations & Future Work'),
     ('16.', 'Glossary of Key Terms'),
     ('17.', 'Project Notebook Structure'),
+    ('18.', 'SHAP Explainability — Why Did the Model Decide That?'),
+    ('19.', 'SQL Analysis — Business Questions Answered with SQL'),
 ]
 for num, title in toc_items:
     p = doc.add_paragraph()
@@ -1567,7 +1569,8 @@ for fut in [
     'Train on the full 2.26M rows rather than the filtered 1.35M',
     'Experiment with LightGBM and CatBoost as alternatives to XGBoost',
     'Build a two-stage model: first predict default probability, then use a second model to price the risk premium',
-    'Apply SHAP (SHapley Additive exPlanations) values for individual loan-level explanations',
+    'Probability calibration (Platt scaling or isotonic regression) for well-calibrated risk scores',
+    'Tiered thresholds by loan grade or purpose for more nuanced decisioning',
 ]:
     add_bullet(doc, fut)
 
@@ -1667,7 +1670,7 @@ doc.add_page_break()
 add_heading(doc, '17. Project Notebook Structure', 1, color=DARKBLUE)
 
 add_body(doc,
-    'The full analysis is organised into seven Jupyter notebooks, each covering one phase '
+    'The full analysis is organised into nine Jupyter notebooks, each covering one phase '
     'of the project. They are designed to be run in order, with each notebook saving its '
     'output as a Parquet file for the next notebook to load.'
 )
@@ -1696,15 +1699,246 @@ styled_table(doc,
         ['06_rejected_analysis.ipynb',
          'Rejected Applications Analysis',
          'Scale context, DTI/Risk Score/Employment comparisons, time trends, geographic analysis'],
+        ['07_shap_explainability.ipynb',
+         'SHAP Model Explainability',
+         'Beeswarm plot, bar chart, waterfall plots, dependence plots — individual-level explanations'],
+        ['08_sql_analysis.ipynb',
+         'SQL Business Analysis',
+         '9 SQL questions on SQLite: GROUP BY, HAVING, CASE, CTEs, Window Functions, 8 charts'],
     ],
     col_widths=[2.0, 1.8, 3.3]
 )
 
 
+doc.add_page_break()
+
+
+# ════════════════════════════════════════════════════════════════
+# 18. SHAP EXPLAINABILITY
+# ════════════════════════════════════════════════════════════════
+
+add_heading(doc, '18. SHAP Explainability — Why Did the Model Decide That?', 1, color=DARKBLUE)
+
+add_body(doc,
+    'Machine learning models are often criticised as "black boxes" — they produce a prediction '
+    'but do not explain it. SHAP (SHapley Additive exPlanations) solves this problem by '
+    'assigning each feature a contribution score for every individual prediction. '
+    'Notebook 07 applies TreeExplainer on a 5,000-row sample of the XGBoost model.'
+)
+
+add_callout(doc,
+    'SHAP values answer: "How much did each feature push this loan\'s risk score '
+    'above or below the average?" A positive SHAP value means the feature increased '
+    'the predicted default probability; a negative value means it lowered it.',
+    label='WHAT IS SHAP', bg='1A5276'
+)
+
+add_heading(doc, '18.1  Global Feature Importance — What Matters Most?', 2)
+
+add_body(doc,
+    'The beeswarm summary plot shows every SHAP value for every sample and feature. '
+    'Features are ranked by mean absolute SHAP value — how much they move the prediction '
+    'on average. The colour of each dot shows whether the feature value was high (red) or '
+    'low (blue) for that loan.'
+)
+
+add_image(doc,
+    f'{BASE}/data/shap_summary.png',
+    width=6.2,
+    caption='Figure: SHAP beeswarm plot. Each dot is one loan. Red = high feature value, '
+            'Blue = low feature value. Width shows density of loans at that SHAP value.'
+)
+
+add_body(doc,
+    'The bar chart below shows the mean absolute SHAP value per feature — a clean ranking '
+    'of global importance:'
+)
+
+add_image(doc,
+    f'{BASE}/data/shap_bar.png',
+    width=5.8,
+    caption='Figure: Mean absolute SHAP values (top 10 features). Higher = more influential.'
+)
+
+styled_table(doc,
+    ['Rank', 'Feature', 'Mean |SHAP|', 'Interpretation'],
+    [
+        ['1', 'grade',      '0.3525', 'LendingClub\'s own risk grade — the single strongest signal'],
+        ['2', 'int_rate',   '0.1949', 'Interest rate set by grade — closely correlated with grade'],
+        ['3', 'loan_amnt',  '0.1838', 'Higher loan amounts increase default risk'],
+        ['4', 'annual_inc', '0.1181', 'Higher income lowers default risk (negative SHAP)'],
+        ['5', 'dti',        '0.1061', 'Higher debt burden increases default risk'],
+    ],
+    col_widths=[0.5, 1.5, 1.2, 3.5]
+)
+
+add_heading(doc, '18.2  Individual Explanations — Waterfall Plots', 2)
+
+add_body(doc,
+    'Waterfall plots show how each feature pushed a specific loan\'s prediction above or '
+    'below the base rate. Two contrasting loans were selected: a high-risk borrower '
+    '(predicted probability 0.883, actual DEFAULT) and a low-risk borrower '
+    '(predicted probability 0.111, actual FULLY PAID).'
+)
+
+add_image(doc,
+    f'{BASE}/data/shap_waterfall_high.png',
+    width=6.0,
+    caption='Figure: Waterfall plot for high-risk borrower (prob = 0.883). '
+            'Red bars push the prediction higher (towards default); '
+            'blue bars push it lower. Grade and int_rate dominate.'
+)
+
+add_image(doc,
+    f'{BASE}/data/shap_waterfall_low.png',
+    width=6.0,
+    caption='Figure: Waterfall plot for low-risk borrower (prob = 0.111). '
+            'Low grade, low int_rate, and high income all push the risk score down.'
+)
+
+add_heading(doc, '18.3  Dependence Plots — How Grade and Rate Interact', 2)
+
+add_body(doc,
+    'Dependence plots show how a single feature\'s SHAP value varies with its actual value, '
+    'and how a second feature (colour) modulates that relationship. '
+    'The plots confirm that grade and interest rate interact strongly — high-grade, '
+    'low-rate loans receive strongly negative SHAP (lower default risk), '
+    'while low-grade, high-rate loans receive strongly positive SHAP (higher default risk).'
+)
+
+add_image(doc,
+    f'{BASE}/data/shap_dependence.png',
+    width=6.2,
+    caption='Figure: SHAP dependence plots for grade (left) and int_rate (right). '
+            'Colour encodes a second interacting feature.'
+)
+
+add_callout(doc,
+    'SHAP analysis confirms the model is behaving as expected: grade and interest rate dominate '
+    'because they are LendingClub\'s own risk assessment, condensed into a single variable. '
+    'The model is learning to trust the platform\'s existing risk judgement — then refining it '
+    'with income, DTI, and loan amount.',
+    label='KEY TAKEAWAY', bg='1F6B31'
+)
+
+doc.add_page_break()
+
+
+# ════════════════════════════════════════════════════════════════
+# 19. SQL ANALYSIS
+# ════════════════════════════════════════════════════════════════
+
+add_heading(doc, '19. SQL Analysis — Business Questions Answered with SQL', 1, color=DARKBLUE)
+
+add_body(doc,
+    'Notebook 08 loads the 1.35M loans dataset into a SQLite in-memory database and answers '
+    '9 targeted business questions using SQL. This demonstrates how SQL can deliver immediate '
+    'analytical value on top of a machine learning dataset — covering GROUP BY, HAVING, CASE, '
+    'Common Table Expressions (CTEs), and Window Functions.'
+)
+
+add_heading(doc, '19.1  Default Rate by Loan Grade (Q1)', 2)
+
+add_body(doc,
+    'Grade is LendingClub\'s internal credit assessment (A = safest, G = riskiest). '
+    'SQL GROUP BY confirms a monotonic relationship: each grade step adds roughly 4–6 '
+    'percentage points to the default rate.'
+)
+
+add_image(doc,
+    f'{BASE}/data/sql_q1_grade.png',
+    width=6.2,
+    caption='Figure: Default rate (left) and average interest rate (right) by loan grade. '
+            'Grade G defaults at ~3× the rate of Grade A.'
+)
+
+add_heading(doc, '19.2  State-Level Analysis (Q2)', 2)
+
+add_body(doc,
+    'Using HAVING COUNT(*) >= 5,000 to ensure statistical reliability, California, '
+    'New York, Texas, and Florida dominate by volume. The highest default rates '
+    'by state vary by 5–8 percentage points from the lowest.'
+)
+
+add_image(doc,
+    f'{BASE}/data/sql_q2_states.png',
+    width=6.2,
+    caption='Figure: Top 10 states by loan volume (left) and default rate (right, min 5K loans).'
+)
+
+add_heading(doc, '19.3  Loan Purpose Risk Ranking (Q3)', 2)
+
+add_body(doc,
+    'CASE expressions label each loan purpose as High (>25%), Medium (>18%), or Low risk. '
+    'Small business loans carry the highest default rate; credit card refinancing and '
+    'home improvement are the safest categories.'
+)
+
+add_image(doc,
+    f'{BASE}/data/sql_q3_purpose.png',
+    width=5.8,
+    caption='Figure: Default rate by loan purpose. Red = High Risk (>25%), '
+            'Orange = Medium (>18%), Green = Low Risk.'
+)
+
+add_heading(doc, '19.4  Running Total — Window Function (Q6)', 2)
+
+add_body(doc,
+    'SUM() OVER (ORDER BY year) computes a cumulative count and loan volume without '
+    'collapsing rows — a window function that GROUP BY alone cannot achieve. '
+    'The charts show LendingClub\'s explosive growth from a few thousand loans in 2007 '
+    'to over 1.35M cumulative loans by 2018.'
+)
+
+add_image(doc,
+    f'{BASE}/data/sql_q6_running.png',
+    width=6.2,
+    caption='Figure: Running total of loans issued (left) and cumulative loan volume in $M (right).'
+)
+
+add_heading(doc, '19.5  Grade x Purpose Heatmap (Q9)', 2)
+
+add_body(doc,
+    'A two-dimensional GROUP BY across grade and purpose reveals which combinations carry '
+    'the greatest risk. Grade G small business loans are the riskiest combination; '
+    'Grade A credit card loans are the safest.'
+)
+
+add_image(doc,
+    f'{BASE}/data/sql_q9_matrix.png',
+    width=6.2,
+    caption='Figure: Default rate heatmap — loan grade (columns) x purpose (rows). '
+            'Darker red = higher default risk.'
+)
+
+styled_table(doc,
+    ['Q#', 'Business Question', 'SQL Concept'],
+    [
+        ['Q1', 'Default rate by loan grade',                 'GROUP BY, aggregation'],
+        ['Q2', 'Top 10 states by volume & default rate',     'GROUP BY, HAVING, ORDER BY'],
+        ['Q3', 'Loan purpose risk ranking',                  'CASE labels, ORDER BY'],
+        ['Q4', 'Year-over-year loan volume trend',           'Date functions, GROUP BY'],
+        ['Q5', 'Income bracket default analysis',            'CASE binning, GROUP BY'],
+        ['Q6', 'Running total of loans issued',              'Window function: SUM() OVER'],
+        ['Q7', 'High-risk vs low-risk borrower profile',     'CTE, UNION ALL'],
+        ['Q8', 'DTI bucket analysis',                        'CASE, GROUP BY, HAVING'],
+        ['Q9', 'Grade x Purpose default rate matrix',        '2D GROUP BY, pivot heatmap'],
+    ],
+    col_widths=[0.4, 2.8, 2.9]
+)
+
+add_callout(doc,
+    'SQL analysis delivers business answers in seconds on the same dataset that took hours '
+    'to model. It complements machine learning by providing transparent, auditable, '
+    'rule-based insights that any stakeholder can verify and trust.',
+    label='SQL + ML', bg='2C3E50'
+)
+
+
 # ─── save ─────────────────────────────────────────────────────────────────────
 
-out_path = f'{BASE}/docs/LendingClub_Loan_Default_Risk_Report_v4.docx'
+out_path = f'{BASE}/docs/LendingClub_Loan_Default_Risk_Report_v5.docx'
 os.makedirs(f'{BASE}/docs', exist_ok=True)
 doc.save(out_path)
 print(f'\nReport saved: {out_path}')
-print(f'  Pages (estimated): ~35-40')
+print(f'  Pages (estimated): ~45-55')
