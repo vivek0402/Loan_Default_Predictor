@@ -30,10 +30,14 @@ LendingClub_Loan/
 │   ├── 03b_feature_significance.ipynb  # Statistical tests: Point-Biserial, Mann-Whitney, Chi-Square, VIF
 │   ├── 04_modeling.ipynb               # Train LR, Random Forest, XGBoost; threshold optimisation
 │   ├── 05_evaluation.ipynb             # Final evaluation, confusion matrix, business impact
-│   └── 06_rejected_analysis.ipynb      # Analyse 27.6M rejected applications
+│   ├── 06_rejected_analysis.ipynb      # Analyse 27.6M rejected applications
+│   ├── 07_shap_explainability.ipynb    # SHAP values: feature attribution & waterfall plots
+│   └── 08_sql_analysis.ipynb          # 9 SQL business questions on SQLite (GROUP BY, CTE, Window Functions)
 │
 ├── scripts/
-│   └── generate_report.py             # Generates full DOCX project report
+│   ├── generate_report.py             # Generates full DOCX project report
+│   ├── create_shap_notebook.py        # Script that generated notebook 07
+│   └── create_sql_notebook.py         # Script that generated notebook 08
 │
 ├── docs/
 │   └── LendingClub_Loan_Default_Risk_Report_v4.docx   # Full project report
@@ -97,6 +101,28 @@ Threshold optimised using **F2-score** (recall weighted 2× over precision) to p
 - Feature importance (top 15 features)
 - Business impact summary: default rate reduced from 20.0% → 7.2% among approved loans
 
+### 07 — SHAP Explainability
+Uses TreeExplainer on a 5,000-row sample to explain XGBoost predictions:
+- **Beeswarm summary plot** — global feature impact across all predictions
+- **Bar chart** — mean absolute SHAP values (top 10: grade, int_rate, loan_amnt, annual_inc, dti)
+- **Waterfall plots** — individual prediction breakdown for a high-risk (prob=0.883) and low-risk (prob=0.111) borrower
+- **Dependence plots** — how grade and int_rate interact with SHAP values
+
+### 08 — SQL Analysis
+9 business questions answered with SQL using SQLite in-memory on the 1.35M loans dataset:
+
+| # | Question | SQL Concept |
+|---|---|---|
+| 1 | Default rate by loan grade | GROUP BY, aggregation |
+| 2 | Top 10 states by volume & default rate | GROUP BY, HAVING |
+| 3 | Loan purpose risk ranking | CASE labels, ORDER BY |
+| 4 | Year-over-year loan volume trend | Date functions, GROUP BY |
+| 5 | Income bracket default analysis | CASE binning |
+| 6 | Running total of loans issued | Window function — SUM OVER |
+| 7 | High-risk vs low-risk borrower profile | CTE, UNION ALL |
+| 8 | DTI bucket analysis | CASE, HAVING |
+| 9 | Grade × Purpose default rate matrix | 2D GROUP BY, heatmap |
+
 ### 06 — Rejected Applications Analysis
 Analyses LendingClub's 27.6M rejected applications (2007–2018) to complete the full picture:
 
@@ -126,7 +152,7 @@ venv\Scripts\activate        # Windows
 # source venv/bin/activate   # Mac/Linux
 
 pip install pandas numpy matplotlib seaborn scikit-learn xgboost pyarrow \
-            scipy statsmodels python-docx jupyter
+            scipy statsmodels python-docx jupyter shap
 ```
 
 ### 3. Run Notebooks in Order
@@ -134,6 +160,7 @@ pip install pandas numpy matplotlib seaborn scikit-learn xgboost pyarrow \
 ```
 01_data_loading → 02_eda → 03_preprocessing → 03b_feature_significance
 → 04_modeling → 05_evaluation → 06_rejected_analysis
+→ 07_shap_explainability → 08_sql_analysis
 ```
 
 ### 4. Generate the Report (optional)

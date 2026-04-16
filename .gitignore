@@ -23,8 +23,13 @@ Thumbs.db
 .vscode/
 .idea/
 
+# ── Keep only the latest report ───────────────────────────────────────────
+docs/LendingClub_Loan_Default_Risk_Report.docx
+docs/LendingClub_Loan_Default_Risk_Report_v2.docx
+docs/LendingClub_Loan_Default_Risk_Report_v3.docx
+
 # ── Keep these ─────────────────────────────────────────────────────────────
 # notebooks/       ← committed
 # scripts/         ← committed
-# docs/            ← committed (report DOCX)
+# docs/            ← committed (final report only)
 # data/threshold.txt ← small file, keep it
